@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016-2017, 2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2017, 2020-2021, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt) "RRADC: %s: " fmt, __func__
@@ -186,6 +186,7 @@
 #define FG_RR_ADC_STS_CHANNEL_STS		0x2
 
 #define FG_RR_CONV_CONTINUOUS_TIME_MIN_MS	50
+#define FG_RR_CONV_CONT_CBK_TIME_MIN_MS	10
 #define FG_RR_CONV_MAX_RETRY_CNT		50
 #define FG_RR_TP_REV_VERSION1		21
 #define FG_RR_TP_REV_VERSION2		29
@@ -804,7 +805,11 @@ static int rradc_check_status_ready_with_retry(struct rradc_chip *chip,
 			break;
 		}
 
-		msleep(FG_RR_CONV_CONTINUOUS_TIME_MIN_MS);
+		if ((chip->conv_cbk) && (prop->channel == RR_ADC_USBIN_V))
+			msleep(FG_RR_CONV_CONT_CBK_TIME_MIN_MS);
+		else
+			msleep(FG_RR_CONV_CONTINUOUS_TIME_MIN_MS);
+
 		retry_cnt++;
 		rc = rradc_read(chip, status, buf, 1);
 		if (rc < 0) {
@@ -1261,6 +1266,9 @@ static int rradc_get_dt_data(struct rradc_chip *chip, struct device_node *node)
 		}
 	}
 
+	chip->rradc_fg_reset_wa =
+		of_property_read_bool(node, "qcom,rradc-fg-reset-wa");
+
 	iio_chan = chip->iio_chans;
 
 	for (i = 0; i < RR_ADC_MAX; i++) {
@@ -1336,6 +1344,15 @@ static int rradc_probe(struct platform_device *pdev)
 	chip->usb_trig = power_supply_get_by_name("usb");
 	if (!chip->usb_trig)
 		pr_debug("Error obtaining usb power supply\n");
+
+	if (chip->rradc_fg_reset_wa) {
+		chip->nb.notifier_call = rradc_psy_notifier_cb;
+		rc = power_supply_reg_notifier(&chip->nb);
+		if (rc < 0)
+			pr_err("Error registering psy notifier rc = %d\n", rc);
+
+		INIT_WORK(&chip->psy_notify_work, psy_notify_work);
+	}
 
 	return devm_iio_device_register(dev, indio_dev);
 }
